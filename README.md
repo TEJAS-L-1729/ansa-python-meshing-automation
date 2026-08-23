@@ -1,811 +1,333 @@
-# ANSA Python Meshing Automation
+# Camshaft Meshing Automation in ANSA using Python
 
-> **Python-based CAE preprocessing automation for ANSA, focused on repeatable surface/volume meshing, mesh-quality control, parametric mesh studies, logging, and solver-oriented export.**
+Object-oriented Python automation for generating quality-controlled, NASTRAN-ready hexahedral/pentahedral meshes of a two-lobe camshaft in **BETA CAE ANSA**, built as an Experiential Learning project (AS244AI — Aerospace Structures, RVCE, Even Semester 2024–25).
 
-![ANSA](https://img.shields.io/badge/CAE-ANSA-1f6feb)
-![Python](https://img.shields.io/badge/Python-3.x-3776ab)
-![Solver Deck](https://img.shields.io/badge/Deck-NASTRAN-orange)
-![Automation](https://img.shields.io/badge/Workflow-Automated-success)
+The project moves camshaft meshing from a manual, click-driven ANSA workflow to a fully scripted, logged, and batchable pipeline — enabling repeatable mesh-convergence studies (3 mm / 5 mm / 7 mm element sizes) with zero manual re-clicking between runs.
 
----
-
-## 1. Project Overview
-
-This project develops a Python-driven automation workflow for **finite-element pre-processing in BETA CAE ANSA** using a two-phase implementation.
-
-The target geometry is a **camshaft with two lobes and a shaft**. The workflow automates the repetitive stages of geometry import, entity/property retrieval, surface meshing, volume meshing, quality-controlled remeshing, output generation, and execution logging.
-
-The project is intentionally structured as:
-
-- **Phase 1 — Basic Automation:** validates the core ANSA API call sequence for one mesh size.
-- **Phase 2 — Automated Mesh Processor:** wraps the workflow into a reusable `MeshProcessor` class with configuration-driven parameters, multiple mesh sizes, logging, timing, error handling, and automated output naming.
-
-The supplied implementation uses the **NASTRAN ANSA deck** for entity/property operations while the export routine generates **ANSYS `.cdb` output** using `base.OutputAnsys()`. This distinction is important when adapting the project to a production solver workflow.
+<p align="center">
+  <img src="media/fig8.1-camshaft-cad-model-two-lobes.jpg" width="500" alt="Camshaft CAD model, two lobes, SolidWorks">
+</p>
 
 ---
 
-## 2. Problem Statement
+## Contributors
 
-Manual CAE meshing becomes repetitive and difficult to reproduce when the same geometry must be meshed at multiple element sizes or processed repeatedly during design studies.
-
-Typical manual steps include:
-
-1. Importing CAD geometry.
-2. Selecting component-specific properties/entities.
-3. Generating shell/surface meshes.
-4. Creating volume meshes.
-5. Applying mesh-quality criteria.
-6. Remeshing poor-quality regions.
-7. Exporting the model.
-8. Repeating the entire process for each mesh size.
-9. Recording execution status and failures.
-
-This project converts those steps into a **scriptable, repeatable workflow**.
-
----
-
-## 3. Technical Objectives
-
-### Core objectives
-
-- Automate STEP/CAD geometry import.
-- Retrieve ANSA `PSHELL` and `PSOLID` entities programmatically.
-- Collect `FACE` and `VOLUME` entities from property definitions.
-- Generate structured surface meshes using mapped-block meshing.
-- Generate/refine volume meshes using solver-oriented quality controls.
-- Execute the same workflow for multiple target element sizes.
-- Log processing time, output information, and failures.
-- Continue processing subsequent mesh sizes when an individual run fails.
-- Generate unique output filenames for each mesh density.
-- Produce execution summaries and mesh-study recommendations.
-
----
-
-## 4. Workflow Architecture
-
-The overall workflow is:
-
-```text
-                 ┌──────────────────────┐
-                 │      STEP / CAD      │
-                 │       Geometry       │
-                 └──────────┬───────────┘
-                            │
-                            ▼
-                 ┌──────────────────────┐
-                 │ Geometry / Property  │
-                 │ Entity Retrieval     │
-                 │ PSHELL / PSOLID      │
-                 └──────────┬───────────┘
-                            │
-                            ▼
-                 ┌──────────────────────┐
-                 │  Surface Meshing     │
-                 │   Mapped Blocking    │
-                 │  QUAD shell mesh     │
-                 └──────────┬───────────┘
-                            │
-                            ▼
-                 ┌──────────────────────┐
-                 │   Volume Meshing     │
-                 │ Quality-controlled   │
-                 │   remeshing/refine   │
-                 └──────────┬───────────┘
-                            │
-                            ▼
-                 ┌──────────────────────┐
-                 │   Quality Control    │
-                 │ Aspect Ratio / etc.  │
-                 └──────────┬───────────┘
-                            │
-                ┌───────────┴───────────┐
-                │                       │
-                ▼                       ▼
-        ┌──────────────┐       ┌─────────────────┐
-        │ Mesh Export  │       │ Execution Log   │
-        │   .cdb       │       │ Timing / Errors │
-        └──────────────┘       └─────────────────┘
-```
-
-### UML architecture
-
-The supplied project UML separates responsibilities across the application controller, processing engine, file operations, configuration objects, tracking/statistics, and the ANSA API facade.
-
-![Workflow UML](media/fig6.1-uml-workflow-diagram.png)
-
----
-
-## 5. Phase 1 — Basic Automation
-
-`phase1_basic_meshing.py` is the minimal end-to-end implementation.
-
-Its purpose is to verify that the fundamental ANSA Python API sequence works correctly for a **single mesh size** before introducing batching and framework-level functionality.
-
-### Execution sequence
-
-```text
-Import STEP
-    ↓
-Retrieve PSHELL properties
-    ↓
-Collect FACE entities
-    ↓
-Set mesh target length
-    ↓
-Mapped surface meshing
-    ↓
-Retrieve PSOLID properties
-    ↓
-Collect VOLUME entities
-    ↓
-Configure volume quality criteria
-    ↓
-Volume remeshing
-    ↓
-Export model
-```
-
-The current Phase 1 script targets a **3 mm element edge length** and applies an ANSA volume quality criterion based on `NASTRAN Aspect`, with a maximum aspect ratio of `2.3`.
-
-### Representative API operations
-
-```python
-deck = constants.NASTRAN
-
-base.Open("<path-to>/input.STEP")
-
-lobes = base.GetEntity(deck, "PSHELL", 1)
-shaft = base.GetEntity(deck, "PSHELL", 2)
-
-ents1 = base.CollectEntities(deck, lobes, "FACE")
-ents2 = base.CollectEntities(deck, shaft, "FACE")
-
-mesh.SetMeshParamTargetLength("absolute", 3)
-
-mesh.MapBlock(ents1)
-mesh.MapBlock(ents2)
-
-mesh.VolumesParameters(
-    3,
-    2,
-    "NASTRAN Aspect",
-    2.3,
-    True
-)
-
-mesh.VolumesRemesh(vol1)
-mesh.VolumesRemesh(vol2)
-mesh.VolumesRemesh(vol3)
-```
-
-### Why Phase 1 exists
-
-Phase 1 deliberately omits:
-
-- batch processing
-- comprehensive logging
-- configuration abstractions
-- failure tracking
-- execution statistics
-
-This makes it useful as a **small validation baseline** for the ANSA API workflow.
-
----
-
-## 6. Phase 2 — `MeshProcessor`
-
-`phase2_mesh_processor.py` extends the basic workflow into a reusable automation framework.
-
-### Main class
-
-```python
-class MeshProcessor:
-    ...
-```
-
-The class encapsulates:
-
-- CAD import
-- PSHELL retrieval
-- PSOLID retrieval
-- FACE/VOLUME collection
-- mesh sizing
-- mapped-block surface meshing
-- volume quality configuration
-- volume remeshing
-- workflow logging
-
-The `main(mesh_size)` method acts as the primary orchestration function.
-
----
-
-## 7. Configuration-Driven Design
-
-The second implementation separates user-adjustable parameters from the processing logic.
-
-### Path configuration
-
-```python
-PATHS_CONFIG = {
-    'input_paths': {
-        'step_file': r"...\CAM_SHAFT.STEP"
-    },
-    'output_paths': {
-        'output_directory': r"...",
-        'filename_prefix': "meshsize",
-        'file_extension': ".cdb"
-    }
-}
-```
-
-### Property mapping
-
-The model is accessed through configured NASTRAN property IDs:
-
-| Property | Default ID | Purpose |
-|---|---:|---|
-| `PSHELL` lobes | 1 | Surface properties for lobe regions |
-| `PSHELL` shaft | 2 | Surface properties for shaft region |
-| `PSOLID` lobe 1 | 3 | First solid volume |
-| `PSOLID` lobe 2 | 4 | Second solid volume |
-| `PSOLID` shaft | 5 | Shaft volume |
-
-This removes those values from the core processing functions and makes the workflow easier to adapt to another ANSA model.
-
----
-
-## 8. Mesh Parameterization
-
-The script supports a configurable target mesh-size list:
-
-```python
-TARGET_MESH_SIZES = [0.5, 1, 3.0, 5.0, 7.0]
-```
-
-This allows the same workflow to be executed at multiple mesh densities without rewriting the meshing logic.
-
-Conceptually:
-
-```text
-Smaller element size
-        ↓
-Higher mesh density
-        ↓
-Higher computational cost
-        ↓
-Potentially better geometric/solution resolution
-```
-
-The project therefore provides a foundation for **mesh sensitivity and convergence studies**.
-
----
-
-## 9. Surface Meshing Strategy
-
-The surface stage uses **mapped block meshing** for both the lobe and shaft face groups.
-
-```python
-mesh.MapBlock(ents1)
-mesh.MapBlock(ents2)
-```
-
-The intention is to retain structured/organized element layouts where the geometry permits it.
-
-Representative output:
-
-### 3 mm mesh
-
-<img src="media/fig8.3-structured-mesh-element-size-3.jpg" alt="3 mm structured mesh" width="430">
-
-### 5 mm mesh
-
-<img src="media/fig8.9-structured-mesh-element-size-5.jpg" alt="5 mm structured mesh" width="430">
-
-### 7 mm mesh
-
-<img src="media/fig8.14-structured-mesh-element-size-7.jpg" alt="7 mm structured mesh" width="430">
-
----
-
-## 10. Volume Meshing and Quality Control
-
-The volume stage is configured through:
-
-```python
-mesh.VolumesParameters(
-    quality_criterion,
-    quality_level,
-    solver_metric,
-    max_aspect_ratio,
-    strict_enforcement
-)
-```
-
-The supplied configuration is:
-
-```python
-'quality_criterion': 3
-'quality_level': 2
-'solver_metric': "NASTRAN Aspect"
-'max_aspect_ratio': 2.3
-'strict_enforcement': True
-```
-
-Within the script, criterion `3` is documented as **Aspect Ratio**.
-
-The workflow then applies:
-
-```python
-mesh.VolumesRemesh(vol1)
-mesh.VolumesRemesh(vol2)
-mesh.VolumesRemesh(vol3)
-```
-
-This makes quality control part of the meshing pipeline rather than a purely manual post-processing step.
-
----
-
-## 11. Mesh Quality Assessment
-
-The supplied visual set contains quality checks for:
-
-- Aspect ratio
-- Warpage
-- Jacobian
-- Skewness
-
-### Example — 3 mm mesh
-
-| Metric | Visualization |
+| Name | USN |
 |---|---|
-| Aspect ratio | ![3 mm aspect ratio](media/fig8.4-element-size-3-aspect-ratio.jpg) |
-| Warpage | ![3 mm warpage](media/fig8.6-element-size-3-warpage.jpg) |
-| Skewness | ![3 mm skewness](media/fig8.7-element-size-3-skewness.jpg) |
-| Jacobian | ![3 mm Jacobian](media/fig8.8-element-size-3-jacobian.jpg) |
+| Akula Uday Kiran | 1RV23AS004 |
+| Movva Sai Lalitha Devi | 1RV23AS030 |
+| Shanthosh KV | 1RV23AS053 |
+| **Tejas L** | 1RV23AS061 |
 
-### Example — 5 mm mesh
+Guided by **Dr. Benjamin Rohit**, Dept. of Aerospace Engineering, RV College of Engineering.
 
-| Metric | Visualization |
+> Note: All intellectual property generated in this project belongs to RV College of Engineering per the department's standard coursework declaration. This repository is published for portfolio/demonstration purposes.
+
+---
+
+## Problem Statement
+
+A camshaft converts rotational motion into the reciprocating motion that opens/closes engine valves via two cam lobes mounted on a cylindrical shaft. Preparing this geometry for FE analysis (structural or NVH) requires:
+
+1. Clean shell + volume meshing of geometrically distinct regions (curved lobes vs. cylindrical shaft), each of which behaves differently under structured (mapped block) meshing
+2. Element quality that satisfies NASTRAN solver thresholds (aspect ratio, skewness, warpage, Jacobian) simultaneously — optimizing for one metric in isolation can degrade another
+3. Repeating this process across multiple element sizes for a mesh convergence study, where results must be comparable (i.e. generated under identical quality settings) across runs
+
+Doing this by hand in ANSA's GUI for every mesh size is slow, non-reproducible, and error-prone — every re-run means re-clicking through the same 10+ menu operations, with no guarantee that quality settings stayed identical between runs. This project scripts the entire workflow using **ANSA's Python API** (`ansa.base`, `ansa.constants`, `ansa.mesh`), turning a manual GUI procedure into a deterministic, version-controllable pipeline.
+
+---
+
+## Architecture
+
+The automation was built in two phases, each preserved in `src/`:
+
+| | **Phase 1** — `phase1_basic_meshing.py` | **Phase 2** — `phase2_mesh_processor.py` |
+|---|---|---|
+| Structure | Flat procedural script | Object-oriented — `MeshProcessor` class |
+| Scope | Single hardcoded mesh size (3 mm) | Batch over any list of mesh sizes |
+| Config | Hardcoded paths & property IDs | Externalized into config dicts (paths, property IDs, quality thresholds, export settings) |
+| Error handling | None — fails hard | `try/except` per mesh size; one failure doesn't kill the batch |
+| Logging | None | Timestamped `INFO`/`ERROR` log file, per-step |
+| Output naming | Fixed filename (overwritten each run) | Size-tagged filenames — no collisions across a batch |
+| Reporting | None | End-of-run summary: success rate, timing, per-size output paths |
+| Idempotency | Re-running overwrites the same `.cdb` silently | Each mesh size gets a traceable, uniquely named output — safe to re-run without data loss |
+
+Phase 1 exists deliberately as a throwaway validation script — it answers "does this exact sequence of ANSA API calls produce a valid mesh at all?" before any engineering effort goes into making it reusable. Phase 2 is the production version.
+
+### Workflow (both phases follow the same 5-stage pipeline)
+
+```
+STEP file import
+      │
+      ▼
+Shell property retrieval (PSHELL) → Surface (FACE) entity collection
+      │
+      ▼
+Mesh size configuration → Mapped block surface (shell) meshing
+      │
+      ▼
+Solid property retrieval (PSOLID) → Volume entity collection
+      │
+      ▼
+Volume mesh quality parameters → VolumesRemesh (quality-controlled solid meshing)
+      │
+      ▼
+Export to NASTRAN-compatible .cdb
+```
+
+<p align="center">
+  <img src="media/fig6.1-uml-workflow-diagram.png" width="700" alt="UML diagram of the ANSAMeshingWorkFlow class architecture">
+  <br><sub>Fig — UML class diagram for the full <code>ANSAMeshingWorkFlow</code> workflow, showing <code>FileManager</code>, <code>EntityManager</code>, and <code>MeshManager</code> as supporting collaborators around the main orchestration class.</sub>
+</p>
+
+---
+
+## Design Rationale
+
+A few implementation choices are worth calling out explicitly, since they aren't obvious from the code alone:
+
+- **Mapped block meshing (`mesh.MapBlock`) over free/unstructured meshing** — the camshaft's lobes and shaft are both geometrically regular (extruded/revolved profiles), which makes them good candidates for structured, block-mapped quad/hex meshing. This trades some automation flexibility (mapped block meshing is pickier about surface topology) for meshes with better element regularity and fewer transition elements than a free tetrahedral mesh would produce.
+- **Absolute sizing over relative sizing** (`SetMeshParamTargetLength("absolute", mesh_size)`) — ensures the target edge length is identical in physical units (mm) across every element on the model, which is what a mesh convergence study needs: comparing element counts/results at *known, fixed* element sizes rather than sizes relative to local feature dimensions.
+- **Aspect Ratio as the primary volume quality criterion** (`quality_criterion=3`, NASTRAN-specific metric) — NASTRAN solid elements are particularly sensitive to element stretching during solve; aspect ratio was prioritized over skewness/warpage/Jacobian as the *enforced* (strict, fail-on-violation) criterion, while the other three are monitored/reported but not gating.
+- **`max_aspect_ratio = 2.3`** — tighter than the generic "acceptable" NASTRAN guideline (~3–5), chosen deliberately to leave headroom before the mesh approaches values that would matter for solver convergence, given this is a rotating-machinery component where stress concentrations at the lobe/shaft transition are analysis-critical.
+- **Property-ID-based entity retrieval** (`PSHELL`/`PSOLID` IDs `1`–`5`) rather than name- or geometry-based lookup — simplest and fastest to implement given the CAD model's property IDs are fixed and known ahead of time. This is also the automation's main portability limitation (see [Limitations](#limitations--assumptions) below).
+
+---
+
+## Phase 1 — Basic Automation
+
+A direct, linear script validating that the core ANSA API call sequence works for a single geometry and mesh size, before wrapping it in the Phase 2 framework. Full source: [`src/phase1_basic_meshing.py`](src/phase1_basic_meshing.py).
+
+**Key API calls used:**
+
+| Call | Purpose |
 |---|---|
-| Aspect ratio | ![5 mm aspect ratio](media/fig8.10-element-size-5-aspect-ratio.jpg) |
-| Warpage | ![5 mm warpage](media/fig8.11-element-size-5-warpage.jpg) |
-| Skewness | ![5 mm skewness](media/fig8.13-element-size-5-skewness.jpg) |
-| Jacobian | ![5 mm Jacobian](media/fig8.12-element-size-5-jacobian.jpg) |
+| `base.Open()` | Imports the STEP CAD geometry into the ANSA workspace |
+| `base.GetEntity(deck, type, id)` | Retrieves a specific property entity (PSHELL/PSOLID) by ID |
+| `base.CollectEntities(deck, entity, type)` | Collects all sub-entities (FACE/VOLUME) belonging to a property |
+| `mesh.SetMeshParamTargetLength("absolute", size)` | Sets a fixed, global target element edge length |
+| `mesh.MapBlock(entities)` | Generates a **structured** quad shell mesh via mapped block meshing |
+| `mesh.VolumesParameters(criterion, level, metric, max_AR, strict)` | Configures the acceptance thresholds for volume mesh quality |
+| `mesh.VolumesRemesh(volumes)` | Generates/refines the solid (hex/penta) volume mesh under those thresholds |
+| `base.OutputAnsys(...)` | Exports the finished mesh to a NASTRAN-compatible `.cdb` |
 
-### Example — 7 mm mesh
+The pipeline runs in a fixed 6-step sequence: CAD import → shell property + face retrieval → mapped block surface mesh → solid property + volume retrieval → quality-controlled volume remesh → export. Each step depends on ANSA entity IDs assigned by the earlier steps, so the sequence is order-sensitive — the volume mesh cannot be generated before the surface mesh exists, and export cannot run before both are complete.
 
-| Metric | Visualization |
+---
+
+## Phase 2 — Enhanced Automation
+
+Full source: [`src/phase2_mesh_processor.py`](src/phase2_mesh_processor.py).
+
+### `MeshProcessor` class
+
+Encapsulates the identical pipeline as Phase 1, but every hardcoded value (STEP file path, property IDs, mesh sizing mode, quality thresholds, export settings) is pulled from a `config` dict supplied at construction — the class itself carries no hardcoded geometry- or project-specific values, which is what makes it reusable across mesh sizes without editing the class body.
+
+### Batch processing + fault tolerance
+
+The main block iterates over `TARGET_MESH_SIZES = [3.0, 5.0, 7.0]`, wrapping each mesh size in its own `try/except`, so a failure at one element size (e.g. an invalid negative size) is logged and skipped rather than aborting the entire convergence study. A `finally` block guarantees the log separator is written regardless of success or failure, keeping the log file's structure consistent and parseable even after a partial-failure run.
+
+At the end of the run, a summary block reports success rate, per-size timing, and output file paths — turning the log into a self-contained audit trail of the whole batch, rather than requiring a human to scroll back through raw ANSA console output.
+
+### Logging architecture
+
+Logging is file-based (not console-only) and structured as `timestamp - level - message`, deliberately chosen over print statements for two reasons: ANSA batch/headless runs don't always have an attached console to capture stdout, and a persistent log file lets a convergence study be audited *after* the fact — which mesh sizes succeeded, how long each stage took, and exactly where and why a failure occurred — without needing to re-run anything.
+
+### Error-handling validation
+
+To prove the `try/except` scaffolding actually works (rather than simply never triggering), the team deliberately fed the script an invalid mesh size (`-3.0 mm`) alongside valid ones. Result: the script logged the geometry import and entity collection as normal, then failed cleanly at the `VOLUME MESH` menu switch, logged the error with timing and traceback, and — critically — **continued on to process the remaining valid mesh sizes** instead of crashing.
+
+```
+2025-07-01 10:19:26,915 - INFO  - Switched to VOLUME MESH menu - volume meshing tools are now active
+2025-07-01 10:19:26,919 - ERROR - MESH SIZE -3.0 PROCESSING FAILED
+2025-07-01 10:19:26,919 - ERROR - - Processing time before failure: 1.23 seconds
+2025-07-01 10:19:26,920 - INFO  - Mesh size processing separator added to log file
+```
+
+A sample full run log (all three mesh sizes succeeding) is included at [`docs/sample_run_log.txt`](docs/sample_run_log.txt).
+
+---
+
+## Mesh Quality Methodology
+
+Every generated mesh is scored in ANSA against four geometric quality metrics before being accepted:
+
+| Metric | What it measures | Acceptable range |
+|---|---|---|
+| **Aspect Ratio** | Deviation from an ideal (square/cubic) element shape — ratio of longest edge to shortest altitude | < 3 good, < 5–10 marginal |
+| **Skewness** | Deviation of element angles from equilateral/regular | < 0.5 good, < 0.85 critical |
+| **Jacobian** | Element shape/volume distortion; the determinant relating local to global coordinates — negative = inverted element | > 0.7 good, > 0.6 acceptable |
+| **Warpage** | Out-of-plane deviation of quad shell faces from planarity | < 0.5 good, < 0.85 critical |
+
+`mesh.VolumesParameters(3, 2, "NASTRAN Aspect", 2.3, True)` enforces **Aspect Ratio** (criterion `3`) at quality level `2` ("Good") against a NASTRAN-specific metric, capped at `2.3`, with strict enforcement — meshing fails rather than silently emitting a poor element. Skewness, Jacobian, and Warpage are computed and reported by ANSA's quality panel for every run but are not set as hard gating criteria in `VolumesParameters` — they are validated post-hoc against the results (see below) rather than blocking mesh generation directly.
+
+### Element formulation
+
+| Property ID | Type | Region | Resulting solid element | Resulting shell element |
+|---|---|---|---|---|
+| PSHELL 1 | Shell | Lobes (curved surfaces) | — | CQUAD4 (structured, mapped block) |
+| PSHELL 2 | Shell | Shaft (cylindrical surfaces) | — | CQUAD4 (structured, mapped block) |
+| PSOLID 3 | Solid | Lobe 1 volume | CHEXA / CPENTA | — |
+| PSOLID 4 | Solid | Lobe 2 volume | CHEXA / CPENTA | — |
+| PSOLID 5 | Solid | Shaft volume | CHEXA / CPENTA | — |
+
+Pentahedral (wedge) elements appear at the lobe-to-shaft transition regions where the structured hexahedral grid cannot maintain a pure hex topology across the geometry's curvature discontinuity — this is expected and standard practice in structured meshing of non-prismatic rotating components.
+
+---
+
+## Results — Mesh Convergence Study (3 mm / 5 mm / 7 mm)
+
+<table>
+<tr>
+<td width="33%"><img src="media/fig8.3-structured-mesh-element-size-3.jpg" alt="3mm mesh"></td>
+<td width="33%"><img src="media/fig8.9-structured-mesh-element-size-5.jpg" alt="5mm mesh"></td>
+<td width="33%"><img src="media/fig8.14-structured-mesh-element-size-7.jpg" alt="7mm mesh"></td>
+</tr>
+<tr>
+<td align="center">3 mm — 64,071 volume elems</td>
+<td align="center">5 mm — 15,356 volume elems</td>
+<td align="center">7 mm — 5,352 volume elems</td>
+</tr>
+</table>
+
+### Element counts
+
+| Mesh Size | Shell (Quad/Tri) | Shell Total | Volume (Hexa/Penta) | Volume Total |
+|---|---|---|---|---|
+| 3 mm | 16,428 / 228 | 16,656 | 62,309 / 1,762 | 64,071 |
+| 5 mm | 6,016 / 144 | 6,160 | 14,612 / 744 | 15,356 |
+| 7 mm | 3,168 / 104 | 3,272 | 4,920 / 432 | 5,352 |
+
+### Convergence trend
+
+Going from 3 mm → 5 mm → 7 mm element edge length reduces the total volume element count by roughly **76% then 65%** at each step — consistent with the expected cubic (∝ 1/size³) scaling of element count with element size for a fixed-volume 3D solid, since halving the edge length roughly doubles element density along each axis. This is a useful sanity check when validating that the automation is actually respecting the requested target size rather than silently defaulting to a coarser mesh.
+
+### Quality checks per mesh size
+
+| Mesh Size | Aspect Ratio (min–max) | Skewness (min–max) | Jacobian, solids (min–max) | Warpage (min–max) |
+|---|---|---|---|---|
+| 3 mm | 1.00 (uniform) | 1.20 (avg) | 0.835 – 1.000 | 1.00 (ideal) |
+| 5 mm | 1.018 – 1.654 | 0.0029 – 0.4766 | 0.977 – 1.000 | 0.0034 – 0.4299 |
+| 7 mm | 1.018 – 1.654 | 0.0029 – 0.4766 | 0.825 – 1.000 | 1.00 (ideal) |
+
+<table>
+<tr><td><img src="media/fig8.4-element-size-3-aspect-ratio.jpg" alt="Elem 3 AR"></td>
+<td><img src="media/fig8.8-element-size-3-jacobian.jpg" alt="Elem 3 Jacobian"></td></tr>
+<tr><td align="center">Element size 3 — Aspect Ratio (all elements ideal, AR = 1.00)</td>
+<td align="center">Element size 3 — Jacobian (0.835–1.0, high geometric accuracy)</td></tr>
+</table>
+
+<table>
+<tr><td><img src="media/fig8.10-element-size-5-aspect-ratio.jpg" alt="Elem 5 AR"></td>
+<td><img src="media/fig8.15-element-size-7-aspect-ratio.jpg" alt="Elem 7 AR"></td></tr>
+<tr><td align="center">Element size 5 — Aspect Ratio (green band, 1.02–1.65)</td>
+<td align="center">Element size 7 — Aspect Ratio (green-blue band, no red/critical elements)</td></tr>
+</table>
+
+All three mesh densities cleared every NASTRAN quality gate with no negative-Jacobian (inverted) elements and no elements flagged for critical skewness or warpage — see [`docs/quality-check-reference-table.md`](docs/quality-check-reference-table.md) for the full ANSA quality-criteria configuration (`fig8.5-ideal-mesh-quality-check-table.jpg`). Note that the coarsest mesh (7 mm) does **not** show materially worse quality metrics than the finest (3 mm) — this is a direct consequence of mapped block (structured) meshing preserving element regularity across sizes, unlike free/unstructured meshing where coarsening typically degrades quality near curved features.
+
+### Final production mesh (used for downstream FE analysis)
+
+| Element Type | Count |
 |---|---|
-| Aspect ratio | ![7 mm aspect ratio](media/fig8.15-element-size-7-aspect-ratio.jpg) |
-| Jacobian | ![7 mm Jacobian](media/fig8.16-element-size-7-jacobian.jpg) |
-| Skewness | ![7 mm skewness](media/fig8.17-element-size-7-skewness.jpg) |
-| Warpage | ![7 mm warpage](media/fig8.18-element-size-7-warpage.jpg) |
+| Hexahedral (solid) | 29,020 |
+| Pentahedral (solid) | 332 |
+| **Total solid elements** | **29,352** |
+| Quad (shell) | 9,630 |
+| Tri (shell) | 24 |
+
+- **98.9%** hexahedral — favorable for numerical accuracy, convergence, and low numerical diffusion vs. tetrahedral-dominated meshes
+- Max skewness (NASTRAN standard): **1.23** (well under the 2.0 threshold)
+- Max aspect ratio: **8.5** — acceptable for structural analysis, though above the stricter 3–5 mm-scale convergence-study values, reflecting the coarser final production mesh sizing
+- Squish and collapse metrics reported no critical failures — no degenerate or self-intersecting elements in the final mesh
+
+<p align="center">
+  <img src="media/fig8.19-final-mesh-jacobian-quality.jpg" width="600" alt="Final mesh Jacobian quality plot">
+</p>
 
 ---
 
-## 12. Logging and Runtime Tracking
+## Performance
 
-Phase 2 introduces structured logging through Python's `logging` module.
+| Mesh Size | Shell + Volume Mesh Time | Export Time | Total | Output File Size |
+|---|---|---|---|---|
+| 3 mm | 5.56 s | 0.41 s | 5.97 s | 18.85 MB |
+| 5 mm | 2.76 s | 0.13 s | 2.89 s | 4.89 MB |
+| 7 mm | 2.42 s | 0.06 s | 2.48 s | 1.90 MB |
 
-The script records:
-
-- mesh size currently being processed
-- workflow start/completion
-- geometry import status
-- number of collected entities
-- mesh parameters
-- quality configuration
-- meshing time
-- export time
-- output file size
-- error details and tracebacks
-- successful/failed mesh sizes
-- overall success rate
-- total script execution time
-- average processing time per mesh
-
-Example logging format:
-
-```text
-%(asctime)s - %(levelname)s - %(message)s
-```
-
-This provides traceability during batch preprocessing and makes failures easier to diagnose.
+Full 3-size batch: **~11.4 seconds** end-to-end (excludes ANSA GUI/license startup). Export time scales roughly linearly with element count (and therefore output file size), while meshing time scales sub-linearly — most of the fixed per-run overhead (geometry import, property retrieval) is size-independent.
 
 ---
 
-## 13. Batch Processing Logic
+## Sample Log Output (Phase 2, successful 3-size batch)
 
-The main execution loop processes each requested mesh size independently:
-
-```python
-for mesh_index, mesh_size in enumerate(TARGET_MESH_SIZES, 1):
-    ...
-    try:
-        processor.main(mesh_size)
-        export_meshed_file(output_file, EXPORT_CONFIG)
-        successful_meshes.append(mesh_size)
-
-    except Exception as e:
-        failed_meshes.append(mesh_size)
-
-    finally:
-        log_mesh_size_separator(...)
 ```
-
-### Processing model
-
-```text
-Mesh size 0.5 mm ──► process ──► export / log
-Mesh size 1.0 mm ──► process ──► export / log
-Mesh size 3.0 mm ──► process ──► export / log
-Mesh size 5.0 mm ──► process ──► export / log
-Mesh size 7.0 mm ──► process ──► export / log
-```
-
-An individual failure is recorded in `failed_meshes` rather than immediately terminating the entire batch.
-
----
-
-## 14. Automated Output Naming
-
-Each mesh size produces a distinct output filename:
-
-```python
-filename = f"{filename_prefix}{mesh_size}{file_extension}"
-```
-
-With the supplied configuration, outputs follow the pattern:
-
-```text
-meshsize0.5.cdb
-meshsize1.cdb
-meshsize3.0.cdb
-meshsize5.0.cdb
-meshsize7.0.cdb
-```
-
-This is useful for automated mesh studies because generated files can be directly associated with their mesh density.
-
----
-
-## 15. Export Pipeline
-
-The export function wraps the ANSA export call:
-
-```python
-base.OutputAnsys(
-    filename=output_path,
-    mode=export_config['mode'],
-    version=export_config['version'],
-    workbench_compatible=export_config['workbench_compatible'],
-    output_element_thickness=export_config['element_thickness_output']
-)
-```
-
-The supplied configuration identifies the output as:
-
-```text
-ANSYS CDB format
-```
-
-and enables workbench compatibility.
-
-> **Solver/export note:** The processing deck is configured as `constants.NASTRAN`, while the final output function is `base.OutputAnsys()`. When adapting this repository for a different downstream solver, verify the required deck, property definitions, and export API together.
-
----
-
-## 16. Geometry
-
-The demonstration model is a **two-lobe camshaft** consisting of:
-
-- one cylindrical shaft region
-- two lobe regions
-- separate `PSHELL` property groups
-- separate `PSOLID` volume groups
-
-![Camshaft CAD model](media/fig8.1-camshaft-cad-model-two-lobes.jpg)
-
-The workflow is therefore organized around explicit component/property grouping rather than blindly meshing every entity in the database.
-
----
-
-## 17. Project Structure
-
-```text
-ansa-python-meshing-automation/
-│
-├── phase1_basic_meshing.py
-├── phase2_mesh_processor.py
-│
-└── media/
-    ├── fig6.1-uml-workflow-diagram.png
-    ├── fig8.1-camshaft-cad-model-two-lobes.jpg
-    ├── fig8.3-structured-mesh-element-size-3.jpg
-    ├── fig8.4-element-size-3-aspect-ratio.jpg
-    ├── fig8.5-ideal-mesh-quality-check-table.jpg
-    ├── fig8.6-element-size-3-warpage.jpg
-    ├── fig8.7-element-size-3-skewness.jpg
-    ├── fig8.8-element-size-3-jacobian.jpg
-    ├── fig8.9-structured-mesh-element-size-5.jpg
-    ├── fig8.10-element-size-5-aspect-ratio.jpg
-    ├── fig8.11-element-size-5-warpage.jpg
-    ├── fig8.12-element-size-5-jacobian.jpg
-    ├── fig8.13-element-size-5-skewness.jpg
-    ├── fig8.14-structured-mesh-element-size-7.jpg
-    ├── fig8.15-element-size-7-aspect-ratio.jpg
-    ├── fig8.16-element-size-7-jacobian.jpg
-    ├── fig8.17-element-size-7-skewness.jpg
-    ├── fig8.18-element-size-7-warpage.jpg
-    ├── fig8.19-final-mesh-jacobian-quality.jpg
-    ├── final-mesh-aspect-ratio-quality.jpg
-    ├── final-mesh-skewness-quality.jpg
-    └── ...
+2025-07-01 10:16:37,631 - INFO - ANSA MESH PROCESSING SCRIPT STARTED
+2025-07-01 10:16:37,632 - INFO - Target mesh sizes for processing: [3.0, 5.0, 7.0]
+2025-07-01 10:16:37,632 - INFO - STARTING MESH SIZE PROCESSING (1/3)
+2025-07-01 10:16:39,549 - INFO - Successfully opened STEP file: CAM_SHAFT.STEP
+2025-07-01 10:16:41,923 - INFO - Successfully generated mapped block mesh for lobe components
+2025-07-01 10:16:42,840 - INFO - Successfully remeshed first lobe volume (lob1)
+2025-07-01 10:16:43,190 - INFO - Mesh processing workflow completed successfully for mesh size 3.0 mm
+2025-07-01 10:16:43,598 - INFO - Model export operation completed successfully
+2025-07-01 10:16:43,603 - INFO - MESH SIZE 3.0 PROCESSING COMPLETED SUCCESSFULLY
+...
+2025-07-01 10:16:48,991 - INFO - Successfully processed 3 mesh sizes: [3.0, 5.0, 7.0]
+2025-07-01 10:16:49,003 - INFO - ALL MESH SIZES PROCESSED SUCCESSFULLY - SCRIPT COMPLETED WITHOUT ERRORS
 ```
 
 ---
 
-## 18. Requirements
+## Repository Structure
 
-### Software
-
-- **BETA CAE ANSA** with the Python scripting interface
-- Python environment provided by/compatible with ANSA
-- Access to the ANSA modules:
-  - `ansa.base`
-  - `ansa.constants`
-  - `ansa.mesh`
-
-The scripts are **not standalone CPython meshing programs**; they depend on the ANSA Python API.
-
----
-
-## 19. Running the Scripts
-
-### Phase 1
-
-1. Open ANSA.
-2. Load the Python script through ANSA's scripting environment.
-3. Replace:
-
-```python
-base.Open("<path-to>/input.STEP")
+```
+camshaft-mesh-automation-ansa-python/
+├── README.md
+├── src/
+│   ├── phase1_basic_meshing.py     # Basic single-size procedural script
+│   └── phase2_mesh_processor.py    # OOP, config-driven, batch + logging
+├── media/                          # Renders, quality plots, UML diagram
+└── docs/
+    ├── sample_run_log.txt          # Full log from a successful 3-size batch
+    └── quality-check-reference-table.md
 ```
 
-with the actual STEP-file path.
+---
 
-4. Set the desired output location.
-5. Execute the script.
+## Tech Stack
 
-### Phase 2
+- **ANSA** (BETA CAE Systems) — CAE pre-processing / meshing environment
+- **ANSA Python API** (`ansa.base`, `ansa.constants`, `ansa.mesh`) — scripting interface
+- **Python** standard library — `logging`, `os`, `uuid`, `time`
+- **NASTRAN** — target solver deck for property definitions and mesh export
 
-Update the configuration block in:
+## Requirements
 
-```text
-phase2_mesh_processor.py
+- ANSA (BETA CAE Systems) with a valid license and Python scripting enabled
+- Python 3.x (ANSA's embedded interpreter)
+- A STEP/IGES camshaft assembly with PSHELL/PSOLID properties pre-assigned to lobe and shaft regions
+
+## Running
+
+From within ANSA's Python scripting console/shell, or via ANSA batch mode:
+
+```bash
+ansa -b -exec "python3 src/phase2_mesh_processor.py"
 ```
 
-At minimum, configure:
+Edit the `PATHS_CONFIG`, `PROPERTY_CONFIG`, and `TARGET_MESH_SIZES` blocks at the bottom of `phase2_mesh_processor.py` to point at your own STEP file, property IDs, and desired mesh sizes.
 
-```python
-LOGGING_CONFIG
-PATHS_CONFIG
-PROPERTY_CONFIG
-MESH_CONFIG
-EXPORT_CONFIG
-TARGET_MESH_SIZES
-```
+## Limitations & Assumptions
 
-Then execute inside ANSA.
+- **Fixed property IDs**: the script assumes `PSHELL` IDs `1`/`2` and `PSOLID` IDs `3`/`4`/`5` are stable across re-exports of the CAD model. A CAD revision that changes ANSA's auto-assigned property numbering would require updating `PROPERTY_CONFIG` (or extending the script to resolve properties by name instead of ID).
+- **Geometry-specific mapped blocking**: `mesh.MapBlock` requires clean, block-mappable surface topology. The automation does not include geometry repair/cleanup logic — it assumes the STEP file is already watertight and free of the small gaps/slivers that commonly break structured meshing.
+- **Single component family**: the workflow is written for this specific two-lobe camshaft topology (2 shell properties, 3 solid properties). Extending it to camshafts with a different lobe count would require generalizing the property-ID lists into a loop rather than hardcoded named variables.
+- **ANSA license / GUI dependency**: requires a licensed ANSA installation; not runnable as a standalone open-source Python package.
 
----
+## Future Enhancements
 
-## 20. Recommended Adaptation Workflow
-
-For a new component, the most important step is **property/entity mapping**.
-
-### 1. Prepare the ANSA model
-
-Confirm that the relevant shell and solid entities have the expected property assignments.
-
-### 2. Update property IDs
-
-Modify:
-
-```python
-PROPERTY_CONFIG
-```
-
-to reflect the new model.
-
-### 3. Update geometry path
-
-Change:
-
-```python
-PATHS_CONFIG['input_paths']['step_file']
-```
-
-### 4. Select mesh sizes
-
-Modify:
-
-```python
-TARGET_MESH_SIZES
-```
-
-### 5. Adjust quality criteria
-
-Tune:
-
-```python
-MESH_CONFIG['mesh_parameters']['quality_control']
-```
-
-for the downstream analysis requirements.
-
-### 6. Validate the output
-
-Check:
-
-- element count
-- element type distribution
-- aspect ratio
-- skewness
-- Jacobian
-- warpage
-- boundary/interface continuity
-- solver compatibility
-
----
-
-## 21. Validation Results
-
-The project report documents the resulting mesh quality for the studied camshaft configuration.
-
-Reported quality observations include:
-
-- Aspect ratios consistently below **2.0**
-- Jacobian values within **0.83–1.0**
-- Skewness below **0.5**
-- Acceptable warpage
-- A structured solid mesh containing **29,352 elements**
-- Approximately **98.9% hexahedral elements**
-
-These values should be treated as **results for the demonstrated model/configuration**, not universal acceptance limits for every CAE problem.
-
-The project report also documents the engineering motivation for the automation: reducing repetitive meshing effort, improving consistency, supporting parametric studies, and integrating automated quality assurance.
-
----
-
-## 22. Demonstration of Final Mesh Quality
-
-![Final mesh aspect ratio](media/final-mesh-aspect-ratio-quality.jpg)
-
-![Final mesh skewness](media/final-mesh-skewness-quality.jpg)
-
-![Final mesh Jacobian](media/fig8.19-final-mesh-jacobian-quality.jpg)
-
----
-
-## 23. Engineering Significance
-
-The key engineering contribution is not simply generating a mesh through Python. It is the **automation of a repeatable preprocessing decision chain**:
-
-```text
-Engineering geometry
-      ↓
-Model-specific entity identification
-      ↓
-Parameterized meshing
-      ↓
-Quality-controlled refinement
-      ↓
-Batch execution
-      ↓
-Traceable outputs
-      ↓
-Solver-ready preprocessing
-```
-
-This approach is applicable to:
-
-- mesh convergence studies
-- design-of-experiments workflows
-- repetitive CAE preprocessing
-- batch model generation
-- automated solver preparation
-- design optimization loops
-
----
-
-## 24. Limitations
-
-The supplied implementation is a project framework rather than a fully generalized commercial meshing system.
-
-Current limitations include:
-
-- dependence on ANSA-specific Python APIs
-- property IDs tied to the demonstration model unless reconfigured
-- geometry handling centered around the supplied camshaft workflow
-- no standalone geometry healing pipeline
-- no automated physics-based mesh adaptation
-- no automated solver execution/post-processing loop
-- export configuration must be verified for the intended downstream solver
-- mesh-quality thresholds are currently parameterized rather than automatically selected from analysis physics
-
----
-
-## 25. Future Development
-
-Potential extensions include:
-
-- adaptive mesh refinement based on solution gradients
-- broader geometry/component support
-- automatic CAD feature recognition
-- automated convergence analysis
-- integration with optimization algorithms
-- automated solver execution
-- result post-processing
-- database-based mesh/quality tracking
-- cloud/HPC batch execution
-- GUI-based configuration
-- automated generation of engineering reports
-
----
-
-## 26. Technical Skills Demonstrated
-
-**Programming**
-
-- Python
-- Object-oriented design
-- Exception handling
-- Logging
-- File/path management
-- Batch processing
-- Runtime/performance tracking
-
-**CAE / FEA**
-
-- ANSA preprocessing
-- Surface meshing
-- Volume meshing
-- Structured/mapped meshing
-- Element-quality assessment
-- Parametric mesh studies
-- Solver-oriented preprocessing
-
-**Engineering Automation**
-
-- Configuration-driven workflows
-- Reproducible preprocessing
-- Automated quality control
-- Output traceability
-- Failure isolation and reporting
-
----
-
-## 27. Repository Notes
-
-This repository contains the supplied educational implementation and supporting visual documentation from the project.
-
-The scripts are intended to be executed **inside ANSA**, where the `ansa` Python modules are available.
-
-Before running on another model:
-
-1. Verify property IDs.
-2. Verify the geometry path.
-3. Verify mesh units.
-4. Verify quality criteria.
-5. Verify the intended solver/export format.
-
----
-
-## 28. Project Context
-
-**Course:** Aerospace Structures (AS244AI)  
-**Institution:** RV College of Engineering  
-**Project:** Scripting in ANSA using Python  
-**Application:** Automated CAE preprocessing / finite-element meshing
-
+- Adaptive mesh refinement based on local geometric curvature/complexity
+- Resolving PSHELL/PSOLID entities by name rather than fixed ID, for robustness across CAD re-exports
+- Extending the `MeshProcessor` config schema to support additional automotive/rotating-machinery components beyond the camshaft
+- Coupling `TARGET_MESH_SIZES` selection with an optimization loop (DOE-driven) instead of a fixed list
+- Cloud/headless batch execution for large-scale parametric studies

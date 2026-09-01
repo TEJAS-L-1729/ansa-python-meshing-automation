@@ -25,6 +25,34 @@ Guided by **Dr. Benjamin Rohit**, Dept. of Aerospace Engineering, RV College of 
 
 ---
 
+## 🙋 My Contribution
+ 
+This was a 4-person team project. Here's specifically what I owned:
+ 
+| Area | What I Did |
+|---|---|
+| 🧩 **CAD Modeling** | Built the SolidWorks camshaft model, including the PSHELL/PSOLID property groupings the meshing automation depends on |
+| 🖱️ **Conventional Meshing** | Learned and carried out manual, GUI-driven ANSA meshing first — this is what informed the API call sequence and quality-criteria choices scripted later |
+| 🐍 **Phase 1 Scripting** | Wrote [`phase1_basic_meshing.py`](src/phase1_basic_meshing.py) end-to-end — validating the core ANSA API call sequence on a single mesh size |
+| 🤖 **Phase 2 Scripting** | Contributed to the `MeshProcessor` class, using AI-assisted coding for part of the implementation, then reviewing and adapting it against my working Phase 1 logic |
+| 📏 **Quality Criteria Tuning** | Configured and validated aspect ratio, skewness, Jacobian, and warpage thresholds against NASTRAN guidelines for this rotating-machinery component |
+| 🔄 **Import / Export Pipeline** | Owned CAD/STEP import and NASTRAN-compatible mesh export across all three mesh sizes in the convergence study |
+
+### Skills Learnt
+ 
+![ANSA](https://img.shields.io/badge/-ANSA%20Meshing-2E7D32?style=flat&logoColor=white)
+![ANSA API](https://img.shields.io/badge/-ANSA%20Python%20API-1565C0?style=flat&logoColor=white)
+![Mesh Quality](https://img.shields.io/badge/-NASTRAN%20Mesh%20Quality-B71C1C?style=flat&logoColor=white)
+![CAD](https://img.shields.io/badge/-SolidWorks%20CAD-455A64?style=flat&logoColor=white)
+![AI-Assisted Dev](https://img.shields.io/badge/-AI--Assisted%20Development-6A1B9A?style=flat&logoColor=white)
+ 
+- Structured/mapped-block meshing methodology in ANSA, moving from GUI-driven to fully scripted
+- Tuning NASTRAN-specific mesh quality thresholds (aspect ratio, skewness, Jacobian, warpage) for a rotating-machinery component
+- Reviewing and validating AI-suggested code against domain requirements, rather than using it as-is
+- Translating a SolidWorks CAD model into ANSA-ready entities as the starting point for an automated pipeline
+
+---
+ 
 ## Problem Statement
 
 A camshaft converts rotational motion into the reciprocating motion that opens/closes engine valves via two cam lobes mounted on a cylindrical shaft. Preparing this geometry for FE analysis (structural or NVH) requires:

@@ -1,0 +1,27 @@
+# --- CAD / Office lock & autosave files ---
+~$*
+*.~*
+*.tmp
+*.bak
+
+# SolidWorks / ANSA journal & backup files
+*.SLDPRT.bak
+*.SLDASM.bak
+*_backup.*
+
+# --- OS junk ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Python (ansa-python-meshing-automation, optical-wireless-data-transmission-Li-Fi) ---
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# --- Editor/IDE ---
+.vscode/
+.idea/

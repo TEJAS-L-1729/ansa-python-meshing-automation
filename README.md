@@ -37,7 +37,7 @@ This was a 4-person team project. Here's specifically what I owned:
 | 🤖 **Phase 2 Scripting** | Contributed to the `MeshProcessor` class, using AI-assisted coding for part of the implementation, then reviewing and adapting it against my working Phase 1 logic |
 | 📏 **Quality Criteria Tuning** | Configured and validated aspect ratio, skewness, Jacobian, and warpage thresholds against NASTRAN guidelines for this rotating-machinery component |
 | 🔄 **Import / Export Pipeline** | Owned CAD/STEP import and NASTRAN-compatible mesh export across all three mesh sizes in the convergence study |
-
+ 
 ### Skills Learnt
  
 ![ANSA](https://img.shields.io/badge/-ANSA%20Meshing-2E7D32?style=flat&logoColor=white)
@@ -50,9 +50,10 @@ This was a 4-person team project. Here's specifically what I owned:
 - Tuning NASTRAN-specific mesh quality thresholds (aspect ratio, skewness, Jacobian, warpage) for a rotating-machinery component
 - Reviewing and validating AI-suggested code against domain requirements, rather than using it as-is
 - Translating a SolidWorks CAD model into ANSA-ready entities as the starting point for an automated pipeline
-
----
- 
+- **System integration** — making sure a CAD model built independently of the meshing scripts still fed cleanly into the automated pipeline without manual rework
+- **Iterative validation across a team workflow** — tuning quality-criteria thresholds against results the rest of the team would consume downstream, not just against a spec sheet in isolation
+- **Technical documentation** — writing up methodology and results in a way a teammate (or a future reader) could follow without re-deriving the reasoning
+--- 
 ## Problem Statement
 
 A camshaft converts rotational motion into the reciprocating motion that opens/closes engine valves via two cam lobes mounted on a cylindrical shaft. Preparing this geometry for FE analysis (structural or NVH) requires:
